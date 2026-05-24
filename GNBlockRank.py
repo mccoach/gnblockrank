@@ -3022,9 +3022,15 @@ if __name__ == "__main__":
 
 # git remote add origin https://github.com/mccoach/gnblockrank.git #关联远程仓库（最关键一步），仅第一次推送前运行
 
-# git push origin main #推送到远程仓库
+# git push origin main #推送代码到远程仓库，只推代码不推版本号
 
-# #最常用的 3 条命令（每次推送都用）
+# git tag 版本号（不能含空格） #提交版本号，不能包含空格，如v1.0.0.20260524
+
+# git push origin --tags #推送所有版本号标签到远程仓库，只推版本号不推代码
+
+# #最常用的 5 条命令（每次推送都用）
 # git add .            # 保存改动
 # git commit -m "说明"  # 提交到本地
 # git push origin main # 推送到远程
+# git tag 版本号      # 打版本号标签
+# git push origin --tags  # 推送版本号

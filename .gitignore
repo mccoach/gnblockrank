@@ -1,0 +1,152 @@
+# =========================
+# Python bytecode / cache
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# =========================
+# Python build / package
+# =========================
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# =========================
+# PyInstaller
+# =========================
+*.manifest
+*.spec
+*.pkg
+*.toc
+*.pyz
+
+# PyInstaller generated reports
+warn-*.txt
+xref-*.html
+
+# =========================
+# Executables / binaries
+# =========================
+*.exe
+*.dll
+*.so
+*.dylib
+
+# =========================
+# Project local config
+# =========================
+GNBlockRank_config.json
+*.local.json
+*.local.yaml
+*.local.yml
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+log/
+
+# =========================
+# Data / export files
+# =========================
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+*.db
+*.sqlite
+*.sqlite3
+
+# 如果后续需要提交模板Excel，可用这种方式放行：
+# !templates/*.xlsx
+
+# =========================
+# IDE / editor
+# =========================
+.vscode/*
+.vscode/launch.json
+.vscode/settings.json
+!.vscode/settings.example.json
+!.vscode/extensions.json
+
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.code-workspace
+
+# =========================
+# OS generated files
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# =========================
+# Test / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+coverage.xml
+*.cover
+
+# =========================
+# Type checker / linter cache
+# =========================
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+~$*

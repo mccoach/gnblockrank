@@ -468,7 +468,7 @@ def make_default_config():
     return {
         "config_version": 2,
         "ui": {
-            "window_title": "概念板块统计排序助手 v1.1.0 20260525",
+            "window_title": "概念板块统计排序助手 v1.1.1-20260525",
             "window_geometry": "1420x880",
         },
         "daily_source": {

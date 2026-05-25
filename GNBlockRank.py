@@ -14,8 +14,8 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from openpyxl.styles import Alignment, Border, Side
+from tkinter import filedialog, messagebox, colorchooser
+from openpyxl.styles import Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # ============================================================
@@ -38,6 +38,10 @@ TDX_TNF_HEADER_SIZE = 50
 TDX_TNF_RECORD_SIZE = 360
 
 PRICE_DIVISOR = 100.0
+
+DEFAULT_ENTRY_THRESHOLD = 9.7
+DEFAULT_MARK_THRESHOLD = 19.98
+DEFAULT_MARK_FILL_COLOR = "FF8080"
 
 UI_BUTTON_WIDTH = 10
 UI_MAIN_BUTTON_WIDTH = 14
@@ -449,13 +453,22 @@ def ths_stockname_dir(ths_root):
 # ============================================================
 
 
+def normalize_excel_color(value):
+    color = str(value or "").strip().replace("#", "").upper()
+
+    if not re.fullmatch(r"[0-9A-F]{6}", color):
+        return DEFAULT_MARK_FILL_COLOR
+
+    return color
+
+
 def make_default_config():
     start_date, end_date = default_start_end_dates()
 
     return {
         "config_version": 2,
         "ui": {
-            "window_title": "概念板块统计排序助手 v1.0 20260524",
+            "window_title": "概念板块统计排序助手 v1.1.0 20260525",
             "window_geometry": "1420x880",
         },
         "daily_source": {
@@ -471,7 +484,9 @@ def make_default_config():
             "start_date": start_date,
             "end_date": end_date,
         },
-        "threshold": 9.7,
+        "entry_threshold": DEFAULT_ENTRY_THRESHOLD,
+        "mark_threshold": DEFAULT_MARK_THRESHOLD,
+        "mark_fill_color": DEFAULT_MARK_FILL_COLOR,
         "output": {
             "output_dir": "",
             "keep_all_blocks": False,
@@ -525,6 +540,8 @@ def normalize_config_paths(config):
         config["output"].get("output_dir", ""),
         True,
     )
+    config["mark_fill_color"] = normalize_excel_color(
+        config.get("mark_fill_color", DEFAULT_MARK_FILL_COLOR))
     return config
 
 
@@ -544,7 +561,9 @@ def load_app_config():
     allowed = {
         "daily_source": saved.get("daily_source"),
         "concept_source": saved.get("concept_source"),
-        "threshold": saved.get("threshold"),
+        "entry_threshold": saved.get("entry_threshold"),
+        "mark_threshold": saved.get("mark_threshold"),
+        "mark_fill_color": saved.get("mark_fill_color"),
         "output": saved.get("output"),
         "block_fields": saved.get("block_fields"),
         "detail_fields": saved.get("detail_fields"),
@@ -576,7 +595,9 @@ def save_app_config(config):
             "ths_root":
             normalize_user_path(config["concept_source"]["ths_root"], True),
         },
-        "threshold": float(config["threshold"]),
+        "entry_threshold": float(config["entry_threshold"]),
+        "mark_threshold": float(config["mark_threshold"]),
+        "mark_fill_color": normalize_excel_color(config["mark_fill_color"]),
         "output": {
             "output_dir": normalize_user_path(config["output"]["output_dir"],
                                               True),
@@ -1008,6 +1029,7 @@ def load_ths_name_map(ths_root, log_func):
     log_func(f"THS 当前主名称文件解析完成：文件数：{len(paths)}，名称数：{len(result)}")
     return result
 
+
 def filter_blacklisted_concept_blocks(blocks, log_func):
     result = []
     skipped = 0
@@ -1025,6 +1047,7 @@ def filter_blacklisted_concept_blocks(blocks, log_func):
         log_func(f"概念板块黑名单过滤：跳过 {skipped} 个")
 
     return result
+
 
 # ============================================================
 # 概念源统一入口
@@ -1142,7 +1165,7 @@ def parse_day_records_reverse_for_range(file_path, start_int, end_int):
 
 
 def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
-                            threshold, log_func):
+                            entry_threshold, log_func):
     start_int = int(start_date)
     end_int = int(end_date)
 
@@ -1199,7 +1222,7 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
             daily_all.setdefault(yyyymmdd, {})[(market, symbol)] = stock_data
             valid_this_symbol = True
 
-            if pct_chg > threshold:
+            if pct_chg > entry_threshold:
                 daily_qualified.setdefault(yyyymmdd,
                                            {})[(market, symbol)] = stock_data
                 qualified_record_count += 1
@@ -1513,7 +1536,8 @@ def make_title_map(field_defs):
 
 
 def build_rows_for_date(blocks, qualified_map, block_fields, detail_fields,
-                        max_blocks, keep_all_blocks, skip_zero_blocks):
+                        max_blocks, keep_all_blocks, skip_zero_blocks,
+                        mark_threshold):
     block_title_map = make_title_map(BLOCK_FIELD_DEFS)
     detail_title_map = make_title_map(DETAIL_FIELD_DEFS)
 
@@ -1555,6 +1579,7 @@ def build_rows_for_date(blocks, qualified_map, block_fields, detail_fields,
 
     rows = []
     merge_ranges = []
+    mark_rows = []
     current_excel_row = 2
 
     has_detail_fields = bool(detail_fields)
@@ -1612,6 +1637,10 @@ def build_rows_for_date(blocks, qualified_map, block_fields, detail_fields,
                 row[detail_title_map[key]] = value
 
             rows.append(row)
+
+            if stock and float(stock.get("PCT_CHG", 0)) > mark_threshold:
+                mark_rows.append(current_excel_row)
+
             current_excel_row += 1
 
         end_row = current_excel_row - 1
@@ -1622,7 +1651,8 @@ def build_rows_for_date(blocks, qualified_map, block_fields, detail_fields,
     columns = [block_title_map[k] for k in block_fields
                ] + [detail_title_map[k] for k in detail_fields]
 
-    return rows, columns, merge_ranges, len(records), records
+    return rows, columns, merge_ranges, len(records), records, mark_rows
+
 
 def build_summary_rows(daily_rank_records, max_blocks):
     rank_limit = min(int(max_blocks), SUMMARY_MAX_RANK)
@@ -1661,6 +1691,7 @@ def build_summary_rows(daily_rank_records, max_blocks):
 
     return rows, columns
 
+
 def excel_display_text(value, number_format=None):
     if value is None:
         return ""
@@ -1694,11 +1725,15 @@ def text_visual_width(text):
     return width
 
 
-def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges):
+def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges,
+                mark_rows, mark_fill_color):
     ws = writer.sheets[sheet_name]
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
+
+    mark_rows = set(mark_rows)
+    mark_fill = PatternFill("solid", fgColor=mark_fill_color)
 
     thin_side = Side(style="thin", color="D9D9D9")
     thin_border = Border(
@@ -1755,6 +1790,9 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges):
             cell = ws.cell(row_idx, col_idx)
             cell.border = thin_border
 
+            if row_idx in mark_rows and col_idx > block_field_count:
+                cell.fill = mark_fill
+
             if row_idx == 1:
                 cell.alignment = Alignment(
                     horizontal="center",
@@ -1792,6 +1830,7 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges):
 
         ws.column_dimensions[letter].width = width
 
+
 def style_summary_sheet(ws):
     from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
@@ -1816,7 +1855,7 @@ def style_summary_sheet(ws):
 
     for row in range(2, max_row + 1):
         ws.cell(row=row, column=1).alignment = Alignment(horizontal="left",
-                                                          vertical="center")
+                                                         vertical="center")
 
     ws.freeze_panes = "B2"
     ws.sheet_view.selection[0].sqref = "A1"
@@ -1826,6 +1865,7 @@ def style_summary_sheet(ws):
 
     for col in range(2, max_col + 1):
         ws.column_dimensions[get_column_letter(col)].width = 4
+
 
 def validate_tdx_daily_source(tdx_root):
     tdx_root = resolve_tdx_root_dir(tdx_root)
@@ -1920,9 +1960,18 @@ def validate_config(config, output_path):
     if start_date > end_date:
         raise ValueError("开始日期不能晚于结束日期。")
 
-    threshold = float(config["threshold"])
-    if threshold < -100:
-        raise ValueError("涨幅阈值不合理。")
+    entry_threshold = float(config["entry_threshold"])
+    if entry_threshold < -100:
+        raise ValueError("入选涨幅阈值不合理。")
+
+    mark_threshold = float(config["mark_threshold"])
+    if mark_threshold < -100:
+        raise ValueError("标记涨幅阈值不合理。")
+
+    mark_fill_color = str(config["mark_fill_color"]).strip().replace(
+        "#", "").upper()
+    if not re.fullmatch(r"[0-9A-F]{6}", mark_fill_color):
+        raise ValueError(f"标记颜色必须是 6 位十六进制颜色，例如 {DEFAULT_MARK_FILL_COLOR}。")
 
     max_blocks = int(config["output"]["max_blocks_per_sheet"])
     if max_blocks <= 0:
@@ -1951,7 +2000,9 @@ def export_to_excel(config, output_path, log_func=print):
     daily_tdx_root = resolve_tdx_root_dir(config["daily_source"]["tdx_root"])
     start_date = normalize_date_text(config["date_range"]["start_date"])
     end_date = normalize_date_text(config["date_range"]["end_date"])
-    threshold = float(config["threshold"])
+    entry_threshold = float(config["entry_threshold"])
+    mark_threshold = float(config["mark_threshold"])
+    mark_fill_color = normalize_excel_color(config["mark_fill_color"])
 
     block_fields = list(config["block_fields"]["selected"])
     detail_fields = list(config["detail_fields"]["selected"])
@@ -1976,7 +2027,9 @@ def export_to_excel(config, output_path, log_func=print):
         )
 
     log_func(f"日期范围：{start_date} ~ {end_date}")
-    log_func(f"涨幅阈值：>{threshold}")
+    log_func(f"入选涨幅阈值：>{entry_threshold}")
+    log_func(f"标记涨幅阈值：>{mark_threshold}")
+    log_func(f"标记颜色：#{mark_fill_color}")
     log_func(f"输出文件：{output_path}")
 
     blocks = load_concept_blocks(config, log_func)
@@ -1997,7 +2050,7 @@ def export_to_excel(config, output_path, log_func=print):
         name_map=name_map,
         start_date=start_date,
         end_date=end_date,
-        threshold=threshold,
+        entry_threshold=entry_threshold,
         log_func=log_func,
     )
 
@@ -2013,7 +2066,7 @@ def export_to_excel(config, output_path, log_func=print):
             log_func(f"处理日期：{yyyymmdd}，无达标个股，跳过")
             continue
 
-        rows, columns, merge_ranges, block_count, rank_records = build_rows_for_date(
+        rows, columns, merge_ranges, block_count, rank_records, mark_rows = build_rows_for_date(
             blocks=blocks,
             qualified_map=qualified_map,
             block_fields=block_fields,
@@ -2021,6 +2074,7 @@ def export_to_excel(config, output_path, log_func=print):
             max_blocks=max_blocks,
             keep_all_blocks=keep_all_blocks,
             skip_zero_blocks=skip_zero_blocks,
+            mark_threshold=mark_threshold,
         )
 
         if not rows:
@@ -2032,6 +2086,7 @@ def export_to_excel(config, output_path, log_func=print):
             "rows": rows,
             "columns": columns,
             "merge_ranges": merge_ranges,
+            "mark_rows": mark_rows,
             "block_count": block_count,
             "qualified_count": len(qualified_map),
             "rank_records": rank_records,
@@ -2059,9 +2114,7 @@ def export_to_excel(config, output_path, log_func=print):
 
                 summary_df = pd.DataFrame(summary_rows,
                                           columns=summary_columns)
-                summary_df.to_excel(writer,
-                                    sheet_name=sheet_name,
-                                    index=False)
+                summary_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
                 summary_ws = writer.sheets[sheet_name]
                 style_summary_sheet(summary_ws)
@@ -2076,6 +2129,8 @@ def export_to_excel(config, output_path, log_func=print):
                     df=df,
                     block_field_count=len(block_fields),
                     merge_ranges=item["merge_ranges"],
+                    mark_rows=item["mark_rows"],
+                    mark_fill_color=mark_fill_color,
                 )
 
             first_ws = writer.sheets["近5日汇总"]
@@ -2088,7 +2143,8 @@ def export_to_excel(config, output_path, log_func=print):
                 "说明": [
                     "指定日期范围内没有生成任何达标板块数据。",
                     f"日期范围：{start_date} ~ {end_date}",
-                    f"涨幅阈值：>{threshold}",
+                    f"入选涨幅阈值：>{entry_threshold}",
+                    f"标记涨幅阈值：>{mark_threshold}",
                 ]
             })
 
@@ -2107,6 +2163,7 @@ def export_to_excel(config, output_path, log_func=print):
     log_func(f"每日明细 Sheet 数量：{len(daily_outputs)}")
     log_func(f"总行数：{total_rows}")
     log_func(f"文件位置：{output_path}")
+
 
 # ============================================================
 # GUI
@@ -2155,7 +2212,13 @@ class App:
             value=self.config["date_range"]["start_date"])
         self.end_date_var = tk.StringVar(
             value=self.config["date_range"]["end_date"])
-        self.threshold_var = tk.StringVar(value=str(self.config["threshold"]))
+
+        self.entry_threshold_var = tk.StringVar(
+            value=str(self.config["entry_threshold"]))
+        self.mark_threshold_var = tk.StringVar(
+            value=str(self.config["mark_threshold"]))
+        self.mark_fill_color_var = tk.StringVar(
+            value=str(self.config["mark_fill_color"]))
 
         self.output_path_var = tk.StringVar(
             value=default_output_path(self.config))
@@ -2326,69 +2389,130 @@ class App:
         frame = tk.LabelFrame(parent, text="日期与统计参数")
         frame.pack(fill="x", pady=3)
 
-        tk.Label(frame, text="开始日期：").grid(row=0,
-                                           column=0,
-                                           sticky="e",
-                                           padx=8,
-                                           pady=6)
+        tk.Label(frame, text="开始：").grid(row=0,
+                                         column=0,
+                                         sticky="e",
+                                         padx=(6, 2),
+                                         pady=6)
         start_entry = tk.Entry(frame,
                                textvariable=self.start_date_var,
-                               width=14)
-        start_entry.grid(row=0, column=1, sticky="w", padx=6, pady=6)
+                               width=max(10,
+                                         len(self.start_date_var.get()) + 1))
+        start_entry.grid(row=0, column=1, sticky="w", padx=(2, 6), pady=6)
         start_entry.bind(
             "<FocusOut>",
             lambda e: self.normalize_date_entry(self.start_date_var))
 
-        tk.Label(frame, text="结束日期：").grid(row=0,
-                                           column=2,
-                                           sticky="e",
-                                           padx=8,
-                                           pady=6)
-        end_entry = tk.Entry(frame, textvariable=self.end_date_var, width=14)
-        end_entry.grid(row=0, column=3, sticky="w", padx=6, pady=6)
+        tk.Label(frame, text="结束：").grid(row=0,
+                                         column=2,
+                                         sticky="e",
+                                         padx=(6, 2),
+                                         pady=6)
+        end_entry = tk.Entry(frame,
+                             textvariable=self.end_date_var,
+                             width=max(10,
+                                       len(self.end_date_var.get()) + 1))
+        end_entry.grid(row=0, column=3, sticky="w", padx=(2, 6), pady=6)
         end_entry.bind("<FocusOut>",
                        lambda e: self.normalize_date_entry(self.end_date_var))
 
-        tk.Label(frame, text="涨幅阈值 >").grid(row=0,
+        tk.Label(frame, text="入选涨幅 >").grid(row=0,
                                             column=4,
                                             sticky="e",
-                                            padx=8,
+                                            padx=(6, 2),
                                             pady=6)
-        tk.Entry(frame, textvariable=self.threshold_var,
-                 width=10).grid(row=0, column=5, sticky="w", padx=6, pady=6)
+        tk.Entry(
+            frame,
+            textvariable=self.entry_threshold_var,
+            width=max(5,
+                      len(self.entry_threshold_var.get()) + 2),
+        ).grid(row=0, column=5, sticky="w", padx=(2, 1), pady=6)
         tk.Label(frame, text="%").grid(row=0,
                                        column=6,
                                        sticky="w",
-                                       padx=(0, 16),
+                                       padx=(0, 6),
                                        pady=6)
 
-        tk.Label(frame, text="每日显示板块数：").grid(row=0,
-                                              column=7,
-                                              sticky="e",
-                                              padx=8,
-                                              pady=6)
-        self.max_blocks_entry = tk.Entry(frame,
-                                         textvariable=self.max_blocks_var,
-                                         width=10)
-        self.max_blocks_entry.grid(row=0, column=8, sticky="w", padx=6, pady=6)
+        tk.Label(frame, text="标记涨幅 >").grid(row=0,
+                                            column=7,
+                                            sticky="e",
+                                            padx=(6, 2),
+                                            pady=6)
+        tk.Entry(
+            frame,
+            textvariable=self.mark_threshold_var,
+            width=max(5,
+                      len(self.mark_threshold_var.get()) + 2),
+        ).grid(row=0, column=8, sticky="w", padx=(2, 1), pady=6)
+        tk.Label(frame, text="%").grid(row=0,
+                                       column=9,
+                                       sticky="w",
+                                       padx=(0, 6),
+                                       pady=6)
+
+        tk.Label(frame, text="颜色：").grid(row=0,
+                                         column=10,
+                                         sticky="e",
+                                         padx=(6, 2),
+                                         pady=6)
+
+        self.mark_color_preview = tk.Label(
+            frame,
+            width=4,
+            relief="solid",
+            bd=1,
+            bg=f"#{normalize_excel_color(self.mark_fill_color_var.get())}",
+        )
+        self.mark_color_preview.grid(row=0,
+                                     column=11,
+                                     sticky="w",
+                                     padx=(2, 3),
+                                     pady=6)
+
+        tk.Button(
+            frame,
+            text="选色",
+            width=6,
+            command=self.choose_mark_color,
+        ).grid(row=0, column=12, sticky="w", padx=(0, 8), pady=6)
+
+        tk.Label(frame, text="板块数：").grid(row=0,
+                                          column=13,
+                                          sticky="e",
+                                          padx=(6, 2),
+                                          pady=6)
+        self.max_blocks_entry = tk.Entry(
+            frame,
+            textvariable=self.max_blocks_var,
+            width=max(5,
+                      len(self.max_blocks_var.get()) + 2),
+        )
+        self.max_blocks_entry.grid(row=0,
+                                   column=14,
+                                   sticky="w",
+                                   padx=(2, 6),
+                                   pady=6)
 
         tk.Checkbutton(
             frame,
             text="全部保留",
             variable=self.keep_all_blocks_var,
             command=self.toggle_max_blocks_entry,
-        ).grid(row=0, column=9, sticky="w", padx=8, pady=6)
+        ).grid(row=0, column=15, sticky="w", padx=(2, 6), pady=6)
 
         tk.Checkbutton(
             frame,
-            text="达标数为 0 的板块不输出",
+            text="不输出达标个股数为0的板块",
             variable=self.skip_zero_blocks_var,
-        ).grid(row=0, column=10, sticky="w", padx=8, pady=6)
+        ).grid(row=0, column=16, sticky="w", padx=(2, 6), pady=6)
 
         self.start_date_var.trace_add(
             "write", lambda *_: self.update_output_path_by_dates())
         self.end_date_var.trace_add(
             "write", lambda *_: self.update_output_path_by_dates())
+
+        self.mark_fill_color_var.trace_add(
+            "write", lambda *_: self.refresh_mark_color_preview())
 
         self.toggle_max_blocks_entry()
 
@@ -2577,12 +2701,10 @@ class App:
         popup.grab_set()
         popup.update_idletasks()
 
-        x = self.root.winfo_rootx() + (
-            self.root.winfo_width() - popup.winfo_width()
-        ) // 2
-        y = self.root.winfo_rooty() + (
-            self.root.winfo_height() - popup.winfo_height()
-        ) // 2
+        x = self.root.winfo_rootx() + (self.root.winfo_width() -
+                                       popup.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() -
+                                       popup.winfo_height()) // 2
 
         popup.geometry(f"+{x}+{y}")
         popup.focus_set()
@@ -2696,6 +2818,33 @@ class App:
         except Exception:
             pass
 
+    def refresh_mark_color_preview(self):
+        if not hasattr(self, "mark_color_preview"):
+            return
+
+        try:
+            color = normalize_excel_color(self.mark_fill_color_var.get())
+        except Exception:
+            color = DEFAULT_MARK_FILL_COLOR
+
+        self.mark_color_preview.config(bg=f"#{color}")
+
+    def choose_mark_color(self):
+        current = normalize_excel_color(self.mark_fill_color_var.get())
+
+        result = colorchooser.askcolor(
+            color=f"#{current}",
+            title="选择标记颜色",
+        )
+
+        if not result or not result[1]:
+            return
+
+        color = result[1].replace("#", "").upper()
+        self.mark_fill_color_var.set(color)
+        self.refresh_mark_color_preview()
+        self.schedule_auto_save()
+
     def update_output_path_by_dates(self, force_dir=None):
         try:
             start_str = normalize_date_text(self.start_date_var.get())
@@ -2729,9 +2878,22 @@ class App:
             raise ValueError("开始日期不能晚于结束日期。")
 
         try:
-            threshold = float(self.threshold_var.get().strip())
+            entry_threshold = float(self.entry_threshold_var.get().strip())
         except Exception:
-            raise ValueError("涨幅阈值必须是数字。")
+            raise ValueError("入选涨幅阈值必须是数字。")
+
+        try:
+            mark_threshold = float(self.mark_threshold_var.get().strip())
+        except Exception:
+            raise ValueError("标记涨幅阈值必须是数字。")
+
+        mark_fill_color = self.mark_fill_color_var.get().strip().replace(
+            "#", "").upper()
+        if not re.fullmatch(r"[0-9A-F]{6}", mark_fill_color):
+            raise ValueError(
+                f"标记颜色必须是 6 位十六进制颜色，例如 {DEFAULT_MARK_FILL_COLOR}。")
+
+        self.mark_fill_color_var.set(mark_fill_color)
 
         raw_max = self.max_blocks_var.get().strip()
         if not raw_max.isdigit() or int(raw_max) <= 0:
@@ -2755,7 +2917,9 @@ class App:
 
         config["date_range"]["start_date"] = start
         config["date_range"]["end_date"] = end
-        config["threshold"] = threshold
+        config["entry_threshold"] = entry_threshold
+        config["mark_threshold"] = mark_threshold
+        config["mark_fill_color"] = mark_fill_color
 
         output_path = normalize_user_path(self.output_path_var.get(), True)
         if output_path and not output_path.lower().endswith(".xlsx"):
@@ -2867,7 +3031,9 @@ class App:
             self.concept_ths_root_var,
             self.start_date_var,
             self.end_date_var,
-            self.threshold_var,
+            self.entry_threshold_var,
+            self.mark_threshold_var,
+            self.mark_fill_color_var,
             self.output_path_var,
             self.keep_all_blocks_var,
             self.max_blocks_var,
@@ -3008,7 +3174,7 @@ if __name__ == "__main__":
 
 # 【封装exe文件】
 # Set-Location "E:\AppProject\GNBlockRank"
-# pyinstaller "E:\AppProject\GNBlockRank\GNBlockRank.py" --onefile --windowed --clean --noconfirm --name "GNBlockRank" --icon "E:\AppProject\GNBlockRank\icon.ico" --add-data "E:\AppProject\GNBlockRank\wechat_qr.png;." --add-data "E:\AppProject\GNBlockRank\icon.ico;." --upx-dir "D:\upx-5.1.1-win64" --hidden-import secrets --exclude-module matplotlib --exclude-module scipy --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --exclude-module IPython --exclude-module notebook --exclude-module pytest --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module html --exclude-module http --exclude-module xmlrpc
+# pyinstaller "E:\AppProject\GNBlockRank\GNBlockRank.py" --onefile --windowed --clean --noconfirm --name "GNBlockRank" --icon "E:\AppProject\GNBlockRank\icon.ico" --add-data "E:\AppProject\GNBlockRank\wechat_qr.png;." --add-data "E:\AppProject\GNBlockRank\icon.ico;." --upx-dir "D:\upx-5.1.1-win64" --hidden-import secrets --exclude-module matplotlib --exclude-module scipy --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --hidden-import openpyxl.styles --exclude-module IPython --exclude-module notebook --exclude-module pytest --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module html --exclude-module http --exclude-module xmlrpc
 
 # 文件会生成在"E:\AppProject\GNBlockRank\dist\GNBlockRank.exe"
 

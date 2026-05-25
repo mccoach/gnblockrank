@@ -494,6 +494,12 @@ def make_default_config():
             "skip_zero_blocks": True,
             "auto_open_file": True,
         },
+        "path_history": {
+            "daily_tdx_root": "",
+            "concept_tdx_root": "",
+            "concept_ths_root": "",
+            "output_dir": "",
+        },
         "block_fields": {
             "order": [x["key"] for x in BLOCK_FIELD_DEFS],
             "selected": [x["key"] for x in BLOCK_FIELD_DEFS],
@@ -542,6 +548,17 @@ def normalize_config_paths(config):
     )
     config["mark_fill_color"] = normalize_excel_color(
         config.get("mark_fill_color", DEFAULT_MARK_FILL_COLOR))
+
+    path_history = config.setdefault("path_history", {})
+    for key in [
+            "daily_tdx_root",
+            "concept_tdx_root",
+            "concept_ths_root",
+            "output_dir",
+    ]:
+        path_history[key] = normalize_user_path(path_history.get(key, ""),
+                                                True)
+
     return config
 
 
@@ -565,6 +582,7 @@ def load_app_config():
         "mark_threshold": saved.get("mark_threshold"),
         "mark_fill_color": saved.get("mark_fill_color"),
         "output": saved.get("output"),
+        "path_history": saved.get("path_history"),
         "block_fields": saved.get("block_fields"),
         "detail_fields": saved.get("detail_fields"),
     }
@@ -598,15 +616,27 @@ def save_app_config(config):
         "entry_threshold": float(config["entry_threshold"]),
         "mark_threshold": float(config["mark_threshold"]),
         "mark_fill_color": normalize_excel_color(config["mark_fill_color"]),
-        "output": {
-            "output_dir": normalize_user_path(config["output"]["output_dir"],
-                                              True),
-            "keep_all_blocks": bool(config["output"]["keep_all_blocks"]),
-            "max_blocks_per_sheet":
-            int(config["output"]["max_blocks_per_sheet"]),
-            "skip_zero_blocks": bool(config["output"]["skip_zero_blocks"]),
-            "auto_open_file":
-            bool(config["output"].get("auto_open_file", True)),
+        "path_history": {
+            "daily_tdx_root":
+            normalize_user_path(
+                config.get("path_history", {}).get("daily_tdx_root", ""),
+                True,
+            ),
+            "concept_tdx_root":
+            normalize_user_path(
+                config.get("path_history", {}).get("concept_tdx_root", ""),
+                True,
+            ),
+            "concept_ths_root":
+            normalize_user_path(
+                config.get("path_history", {}).get("concept_ths_root", ""),
+                True,
+            ),
+            "output_dir":
+            normalize_user_path(
+                config.get("path_history", {}).get("output_dir", ""),
+                True,
+            ),
         },
         "block_fields": deepcopy(config["block_fields"]),
         "detail_fields": deepcopy(config["detail_fields"]),
@@ -2279,7 +2309,7 @@ class App:
                  width=120).grid(row=0, column=1, sticky="we", padx=6, pady=6)
 
         tk.Button(frame,
-                  text="选择...",
+                  text="选择文件夹",
                   width=UI_BUTTON_WIDTH,
                   command=self.choose_daily_tdx_root).grid(row=0,
                                                            column=2,
@@ -2288,7 +2318,7 @@ class App:
                                                            pady=6)
 
         tk.Button(frame,
-                  text="打开",
+                  text="打开文件夹",
                   width=UI_BUTTON_WIDTH,
                   command=lambda: self.open_existing_folder(
                       self.daily_tdx_root_var.get())).grid(row=0,
@@ -2321,7 +2351,7 @@ class App:
 
         self.concept_tdx_choose_btn = tk.Button(
             frame,
-            text="选择...",
+            text="选择文件夹",
             width=UI_BUTTON_WIDTH,
             command=self.choose_concept_tdx_root)
 
@@ -2333,7 +2363,7 @@ class App:
 
         self.concept_tdx_open_btn = tk.Button(
             frame,
-            text="打开",
+            text="打开文件夹",
             width=UI_BUTTON_WIDTH,
             command=lambda: self.open_existing_folder(self.concept_tdx_root_var
                                                       .get()))
@@ -2361,7 +2391,7 @@ class App:
 
         self.concept_ths_choose_btn = tk.Button(
             frame,
-            text="选择...",
+            text="选择文件夹",
             width=UI_BUTTON_WIDTH,
             command=self.choose_concept_ths_root)
         self.concept_ths_choose_btn.grid(row=1,
@@ -2372,7 +2402,7 @@ class App:
 
         self.concept_ths_open_btn = tk.Button(
             frame,
-            text="打开",
+            text="打开文件夹",
             width=UI_BUTTON_WIDTH,
             command=lambda: self.open_existing_folder(self.concept_ths_root_var
                                                       .get()))
@@ -2530,7 +2560,7 @@ class App:
                  width=120).grid(row=0, column=1, sticky="we", padx=6, pady=6)
 
         tk.Button(frame,
-                  text="选择目录...",
+                  text="选择文件夹",
                   width=UI_BUTTON_WIDTH,
                   command=self.choose_output_dir).grid(row=0,
                                                        column=2,
@@ -2539,7 +2569,7 @@ class App:
                                                        pady=6)
 
         tk.Button(frame,
-                  text="另存为...",
+                  text="另存为",
                   width=UI_BUTTON_WIDTH,
                   command=self.choose_output_file).grid(row=0,
                                                         column=3,
@@ -2548,7 +2578,7 @@ class App:
                                                         pady=6)
 
         tk.Button(frame,
-                  text="打开",
+                  text="打开文件夹",
                   width=UI_BUTTON_WIDTH,
                   command=self.open_output_folder).grid(row=0,
                                                         column=4,
@@ -2731,29 +2761,106 @@ class App:
 
         self.schedule_auto_save()
 
+    def get_dialog_initial_dir(self, current_path, history_key):
+        current_path = normalize_user_path(current_path, True)
+
+        if current_path:
+            if os.path.isfile(current_path):
+                current_dir = win_dirname(current_path)
+            else:
+                current_dir = current_path
+
+            if os.path.isdir(current_dir):
+                return current_dir
+
+        history = self.config.get("path_history", {}).get(history_key, "")
+        history = normalize_user_path(history, True)
+
+        if history and os.path.isdir(history):
+            return history
+
+        return get_program_dir()
+
+    def update_path_history(self, history_key, path):
+        path = normalize_user_path(path, True)
+
+        if not path:
+            return
+
+        if os.path.isfile(path):
+            path = win_dirname(path)
+
+        if not os.path.isdir(path):
+            return
+
+        self.config.setdefault("path_history", {})[history_key] = path
+
+    def ask_directory_for_path(self, title, current_path, history_key):
+        initial_dir = self.get_dialog_initial_dir(current_path, history_key)
+
+        path = filedialog.askdirectory(
+            title=title,
+            initialdir=initial_dir,
+        )
+
+        if not path:
+            return ""
+
+        path = normalize_user_path(path, True)
+        self.update_path_history(history_key, path)
+
+        return path
+
     def choose_daily_tdx_root(self):
-        path = filedialog.askdirectory(title="选择 TDX 个股历史日线目录")
+        path = self.ask_directory_for_path(
+            title="选择 TDX 个股历史日线目录",
+            current_path=self.daily_tdx_root_var.get(),
+            history_key="daily_tdx_root",
+        )
+
         if path:
-            self.daily_tdx_root_var.set(resolve_tdx_root_dir(path))
+            resolved = resolve_tdx_root_dir(path)
+            self.daily_tdx_root_var.set(resolved)
+            self.update_path_history("daily_tdx_root", resolved)
             self.schedule_auto_save()
 
     def choose_concept_tdx_root(self):
-        path = filedialog.askdirectory(title="选择 TDX 概念成分表目录")
+        path = self.ask_directory_for_path(
+            title="选择 TDX 概念成分表目录",
+            current_path=self.concept_tdx_root_var.get(),
+            history_key="concept_tdx_root",
+        )
+
         if path:
-            self.concept_tdx_root_var.set(resolve_tdx_root_dir(path))
+            resolved = resolve_tdx_root_dir(path)
+            self.concept_tdx_root_var.set(resolved)
+            self.update_path_history("concept_tdx_root", resolved)
             self.schedule_auto_save()
 
     def choose_concept_ths_root(self):
-        path = filedialog.askdirectory(title="选择 THS 概念成分表目录")
+        path = self.ask_directory_for_path(
+            title="选择 THS 概念成分表目录",
+            current_path=self.concept_ths_root_var.get(),
+            history_key="concept_ths_root",
+        )
+
         if path:
-            self.concept_ths_root_var.set(resolve_ths_root_dir(path))
+            resolved = resolve_ths_root_dir(path)
+            self.concept_ths_root_var.set(resolved)
+            self.update_path_history("concept_ths_root", resolved)
             self.schedule_auto_save()
 
     def choose_output_dir(self):
-        path = filedialog.askdirectory(title="选择输出目录")
+        path = self.ask_directory_for_path(
+            title="选择输出目录",
+            current_path=win_dirname(self.output_path_var.get()),
+            history_key="output_dir",
+        )
+
         if path:
             path = normalize_user_path(path, True)
             self.config["output"]["output_dir"] = path
+            self.update_path_history("output_dir", path)
             self.update_output_path_by_dates(force_dir=path)
             self.schedule_auto_save()
 
@@ -2765,9 +2872,15 @@ class App:
             start_str = self.start_date_var.get().strip()
             end_str = self.end_date_var.get().strip()
 
+        initial_dir = self.get_dialog_initial_dir(
+            current_path=self.output_path_var.get(),
+            history_key="output_dir",
+        )
+
         path = filedialog.asksaveasfilename(
             title="选择输出 Excel 文件",
             defaultextension=".xlsx",
+            initialdir=initial_dir,
             initialfile=f"{start_str}-{end_str}_概念板块统计排序.xlsx",
             filetypes=[
                 ("Excel 文件", "*.xlsx"),
@@ -2780,8 +2893,9 @@ class App:
             if not path.lower().endswith(".xlsx"):
                 path += ".xlsx"
             self.output_path_var.set(path)
-            self.config["output"]["output_dir"] = normalize_user_path(
-                win_dirname(path), True)
+            output_dir = normalize_user_path(win_dirname(path), True)
+            self.config["output"]["output_dir"] = output_dir
+            self.update_path_history("output_dir", output_dir)
             self.schedule_auto_save()
 
     def open_output_folder(self):
@@ -2901,6 +3015,8 @@ class App:
 
         config = deepcopy(self.config)
 
+        config.setdefault("path_history",
+                          deepcopy(self.config.get("path_history", {})))
         config["daily_source"]["type"] = DAILY_SOURCE_TDX
         config["daily_source"]["tdx_root"] = resolve_tdx_root_dir(
             self.daily_tdx_root_var.get())
@@ -3169,6 +3285,7 @@ def main():
 if __name__ == "__main__":
     main()
 
+# 以下内容要始终保留，不得删除
 # 【运行虚拟环境】
 # PS E:\AppProject\GNBlockRank> .venv\\Scripts\activate
 

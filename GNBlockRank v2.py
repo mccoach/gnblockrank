@@ -58,6 +58,7 @@ UI_PATH_ENTRY_WIDTH = 120
 UI_PATH_BUTTON_PAD_X = 2
 UI_PATH_ENTRY_PAD_X = 4
 UI_PATH_LABEL_PAD_X = 4
+UI_PATH_LABEL_COL_MINSIZE = 120
 
 SUMMARY_SHEET_NAMES = ["近5日汇总", "近10日汇总", "全部汇总"]
 SUMMARY_MAX_RANK = 50
@@ -3015,15 +3016,17 @@ class App:
         frame = tk.LabelFrame(parent, text="个股及板块指数历史日线数据源")
         frame.pack(fill="x", padx=4, pady=(2, 1))
 
+        frame.columnconfigure(0, minsize=UI_PATH_LABEL_COL_MINSIZE)
+        frame.columnconfigure(1, weight=1)
+
         tk.Label(
             frame,
             text="TDX 历史日线根目录",
-            width=UI_PATH_LABEL_WIDTH,
-            anchor="e",
+            anchor="w",
         ).grid(
             row=0,
             column=0,
-            sticky="e",
+            sticky="w",
             padx=UI_PATH_LABEL_PAD_X,
             pady=UI_ENTRY_PAD_Y,
         )
@@ -3057,8 +3060,7 @@ class App:
             frame,
             text="打开文件夹",
             width=UI_BUTTON_WIDTH,
-            command=lambda: self.open_existing_folder(self.daily_tdx_root_var.
-                                                      get()),
+            command=lambda: self.open_existing_folder(self.daily_tdx_root_var.get()),
         ).grid(
             row=0,
             column=3,
@@ -3067,11 +3069,12 @@ class App:
             pady=UI_ENTRY_PAD_Y,
         )
 
-        frame.columnconfigure(1, weight=1)
-
     def build_concept_source_frame(self, parent):
         frame = tk.LabelFrame(parent, text="概念板块成分数据源")
         frame.pack(fill="x", padx=4, pady=(1, 2))
+
+        frame.columnconfigure(0, minsize=UI_PATH_LABEL_COL_MINSIZE)
+        frame.columnconfigure(1, weight=1)
 
         tk.Radiobutton(
             frame,
@@ -3079,7 +3082,6 @@ class App:
             variable=self.concept_source_type_var,
             value=CONCEPT_SOURCE_TDX,
             command=self.refresh_concept_source_state,
-            width=UI_PATH_LABEL_WIDTH,
             anchor="w",
         ).grid(
             row=0,
@@ -3120,8 +3122,7 @@ class App:
             frame,
             text="打开文件夹",
             width=UI_BUTTON_WIDTH,
-            command=lambda: self.open_existing_folder(self.concept_tdx_root_var
-                                                      .get()),
+            command=lambda: self.open_existing_folder(self.concept_tdx_root_var.get()),
         )
         self.concept_tdx_open_btn.grid(
             row=0,
@@ -3137,7 +3138,6 @@ class App:
             variable=self.concept_source_type_var,
             value=CONCEPT_SOURCE_THS,
             command=self.refresh_concept_source_state,
-            width=UI_PATH_LABEL_WIDTH,
             anchor="w",
         )
         self.concept_ths_radio.grid(
@@ -3179,8 +3179,7 @@ class App:
             frame,
             text="打开文件夹",
             width=UI_BUTTON_WIDTH,
-            command=lambda: self.open_existing_folder(self.concept_ths_root_var
-                                                      .get()),
+            command=lambda: self.open_existing_folder(self.concept_ths_root_var.get()),
         )
         self.concept_ths_open_btn.grid(
             row=1,
@@ -3190,7 +3189,6 @@ class App:
             pady=UI_ENTRY_PAD_Y,
         )
 
-        frame.columnconfigure(1, weight=1)
         self.refresh_concept_source_state()
 
     def build_param_frame(self, parent):
@@ -3369,15 +3367,17 @@ class App:
         frame = tk.LabelFrame(parent, text="输出")
         frame.pack(fill="x", pady=UI_SECTION_PAD_Y)
 
+        frame.columnconfigure(0, minsize=UI_PATH_LABEL_COL_MINSIZE)
+        frame.columnconfigure(1, weight=1)
+
         tk.Label(
             frame,
             text="输出文件",
-            width=UI_PATH_LABEL_WIDTH,
-            anchor="e",
+            anchor="w",
         ).grid(
             row=0,
             column=0,
-            sticky="e",
+            sticky="w",
             padx=UI_PATH_LABEL_PAD_X,
             pady=UI_ENTRY_PAD_Y,
         )
@@ -3419,8 +3419,6 @@ class App:
             padx=UI_PATH_BUTTON_PAD_X,
             pady=UI_ENTRY_PAD_Y,
         )
-
-        frame.columnconfigure(1, weight=1)
 
     def build_field_frame(self, parent):
         frame = tk.LabelFrame(parent, text="输出字段")
@@ -4457,7 +4455,7 @@ if __name__ == "__main__":
 
 # 【封装exe文件】
 # Set-Location "E:\AppProject\GNBlockRank"
-# pyinstaller "E:\AppProject\GNBlockRank\GNBlockRank.py" --onefile --windowed --clean --noconfirm --name "GNBlockRank" --icon "E:\AppProject\GNBlockRank\icon.ico" --add-data "E:\AppProject\GNBlockRank\wechat_qr.png;." --add-data "E:\AppProject\GNBlockRank\icon.ico;." --upx-dir "D:\upx-5.1.1-win64" --hidden-import secrets --exclude-module matplotlib --exclude-module scipy --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --hidden-import openpyxl.styles --exclude-module IPython --exclude-module notebook --exclude-module pytest --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module html --exclude-module http --exclude-module xmlrpc
+# python -m PyInstaller "E:\AppProject\GNBlockRank\GNBlockRank v2.py" --onefile --windowed --clean --noconfirm --name "GNBlockRank" --icon "E:\AppProject\GNBlockRank\icon.ico" --add-data "E:\AppProject\GNBlockRank\wechat_qr.png;." --add-data "E:\AppProject\GNBlockRank\icon.ico;." --upx-dir "D:\upx-5.1.1-win64" --collect-all openpyxl --hidden-import openpyxl --hidden-import openpyxl.styles --hidden-import openpyxl.utils --hidden-import openpyxl.cell --hidden-import openpyxl.cell._writer --hidden-import openpyxl.worksheet --hidden-import openpyxl.writer.excel --hidden-import secrets --exclude-module matplotlib --exclude-module scipy --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --exclude-module IPython --exclude-module notebook --exclude-module pytest --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module html --exclude-module http --exclude-module xmlrpc
 
 # 文件会生成在"E:\AppProject\GNBlockRank\dist\GNBlockRank.exe"
 

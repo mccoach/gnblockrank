@@ -680,7 +680,7 @@ def make_default_config():
     return {
         "config_version": 3,
         "ui": {
-            "window_title": "概念板块统计排序助手 v1.3.0-20260606",
+            "window_title": "概念板块统计排序助手 v1.3.1-20260606",
             "window_geometry": "1420x880",
         },
         "daily_source": {
@@ -3060,7 +3060,8 @@ class App:
             frame,
             text="打开文件夹",
             width=UI_BUTTON_WIDTH,
-            command=lambda: self.open_existing_folder(self.daily_tdx_root_var.get()),
+            command=lambda: self.open_existing_folder(self.daily_tdx_root_var.
+                                                      get()),
         ).grid(
             row=0,
             column=3,
@@ -3122,7 +3123,8 @@ class App:
             frame,
             text="打开文件夹",
             width=UI_BUTTON_WIDTH,
-            command=lambda: self.open_existing_folder(self.concept_tdx_root_var.get()),
+            command=lambda: self.open_existing_folder(self.concept_tdx_root_var
+                                                      .get()),
         )
         self.concept_tdx_open_btn.grid(
             row=0,
@@ -3179,7 +3181,8 @@ class App:
             frame,
             text="打开文件夹",
             width=UI_BUTTON_WIDTH,
-            command=lambda: self.open_existing_folder(self.concept_ths_root_var.get()),
+            command=lambda: self.open_existing_folder(self.concept_ths_root_var
+                                                      .get()),
         )
         self.concept_ths_open_btn.grid(
             row=1,

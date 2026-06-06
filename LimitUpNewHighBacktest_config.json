@@ -1,0 +1,13 @@
+{
+  "config_version": 1,
+  "tdx_root": "D:\\TDX_new",
+  "limit_up_threshold": 19.8,
+  "output": {
+    "output_dir": "E:\\陈谨\\Desktop",
+    "auto_open_file": true
+  },
+  "path_history": {
+    "tdx_root": "D:\\TDX_new",
+    "output_dir": "E:\\陈谨\\Desktop"
+  }
+}

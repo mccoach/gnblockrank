@@ -135,6 +135,10 @@ BLOCK_FIELD_DEFS = [
         "title": "板块涨幅",
     },
     {
+        "key": "BLOCK_3D_PCT_CHG",
+        "title": "3日涨幅",
+    },
+    {
         "key": "BLOCK_OPEN",
         "title": "板块开盘",
     },
@@ -149,6 +153,14 @@ BLOCK_FIELD_DEFS = [
     {
         "key": "BLOCK_CLOSE",
         "title": "板块收盘",
+    },
+    {
+        "key": "BLOCK_VOLUME",
+        "title": "板块成交量",
+    },
+    {
+        "key": "BLOCK_VOLUME_RATIO",
+        "title": "收盘量比",
     },
     {
         "key": "BLOCK_AMOUNT",
@@ -217,6 +229,18 @@ SORT_FIELD_DEFS = [
         "title": "板块涨幅",
     },
     {
+        "key": "BLOCK_3D_PCT_CHG",
+        "title": "3日涨幅",
+    },
+    {
+        "key": "BLOCK_VOLUME",
+        "title": "板块成交量",
+    },
+    {
+        "key": "BLOCK_VOLUME_RATIO",
+        "title": "收盘量比",
+    },
+    {
         "key": "QUALIFIED_COUNT",
         "title": "达标个股数",
     },
@@ -240,15 +264,21 @@ SORT_FIELD_DEFS = [
 
 TDX_ONLY_BLOCK_FIELD_KEYS = {
     "BLOCK_PCT_CHG",
+    "BLOCK_3D_PCT_CHG",
     "BLOCK_OPEN",
     "BLOCK_HIGH",
     "BLOCK_LOW",
     "BLOCK_CLOSE",
+    "BLOCK_VOLUME",
+    "BLOCK_VOLUME_RATIO",
     "BLOCK_AMOUNT",
 }
 
 TDX_ONLY_SORT_FIELD_KEYS = {
     "BLOCK_PCT_CHG",
+    "BLOCK_3D_PCT_CHG",
+    "BLOCK_VOLUME",
+    "BLOCK_VOLUME_RATIO",
     "BLOCK_AMOUNT",
 }
 
@@ -480,6 +510,71 @@ def date_range_desc(start_date, end_date):
         yield current.strftime("%Y%m%d")
         current -= timedelta(days=1)
 
+def get_selected_field_keys_for_data_requirement(block_fields, detail_fields, sort_rules):
+    """
+    汇总所有会影响计算的数据字段：
+    - 用户选择输出的板块字段
+    - 用户选择输出的明细字段
+    - 排序字段
+    """
+    keys = set(block_fields or [])
+    keys.update(detail_fields or [])
+
+    for rule in sort_rules or []:
+        if isinstance(rule, dict):
+            field = rule.get("field")
+            if field:
+                keys.add(field)
+
+    return keys
+
+
+def calc_required_stock_lookback_records(block_fields, detail_fields, sort_rules):
+    """
+    计算个股日线需要向前额外读取多少条交易日记录。
+
+    当前逻辑：
+    - 个股涨幅、入选判断，都至少需要前 1 日收盘价；
+    - 收盘量比 BLOCK_VOLUME_RATIO 需要前 5 日成分股成交量；
+    - 板块成交量 BLOCK_VOLUME 本身不需要前置，但为了量比才需要 5。
+    """
+    keys = get_selected_field_keys_for_data_requirement(
+        block_fields,
+        detail_fields,
+        sort_rules,
+    )
+
+    required = 1
+
+    if "BLOCK_VOLUME_RATIO" in keys:
+        required = max(required, 5)
+
+    return required
+
+
+def calc_required_block_index_lookback_records(block_fields, sort_rules):
+    """
+    计算板块指数日线需要向前额外读取多少条交易日记录。
+
+    当前逻辑：
+    - 板块涨幅 BLOCK_PCT_CHG 需要前 1 日收盘价；
+    - 3日涨幅 BLOCK_3D_PCT_CHG 需要前 3 日收盘价；
+    - 开高低收、成交额等不需要前置，但读取 1 条不影响。
+    """
+    keys = set(block_fields or [])
+
+    for rule in sort_rules or []:
+        if isinstance(rule, dict):
+            field = rule.get("field")
+            if field:
+                keys.add(field)
+
+    required = 1
+
+    if "BLOCK_3D_PCT_CHG" in keys:
+        required = max(required, 3)
+
+    return required
 
 # ============================================================
 # TDX 路径
@@ -680,7 +775,7 @@ def make_default_config():
     return {
         "config_version": 3,
         "ui": {
-            "window_title": "概念板块统计排序助手 v1.3.1-20260606",
+            "window_title": "概念板块统计排序助手 v1.4.1-20260612",
             "window_geometry": "1420x880",
         },
         "daily_source": {
@@ -1459,9 +1554,15 @@ def unpack_day_record(rec):
     }
 
 
-def parse_day_records_reverse_for_range(file_path, start_int, end_int):
+def parse_day_records_reverse_for_range(file_path, start_int, end_int, pre_start_records=1):
     """
-    倒序读取指定区间行情，并额外读取 start_int 之前最近一条记录用于计算首日涨幅。
+    倒序读取指定区间行情，并额外读取 start_int 之前最近 pre_start_records 条记录。
+
+    用途：
+    - pre_start_records=1：用于计算首日涨幅；
+    - pre_start_records=3：用于计算 3 日涨幅；
+    - pre_start_records=5：用于计算量比等需要前 5 日数据的指标；
+    - 如果多个字段同时需要前置数据，应传入最大需求值。
     """
     if not os.path.exists(file_path):
         return []
@@ -1475,6 +1576,8 @@ def parse_day_records_reverse_for_range(file_path, start_int, end_int):
 
     total = size // TDX_DAY_RECORD_SIZE
     rows_desc = []
+    before_start_count = 0
+    pre_start_records = max(0, int(pre_start_records or 0))
 
     with open(file_path, "rb") as f:
         for idx in range(total - 1, -1, -1):
@@ -1498,7 +1601,11 @@ def parse_day_records_reverse_for_range(file_path, start_int, end_int):
                 rows_desc.append(row)
                 continue
 
-            rows_desc.append(row)
+            if before_start_count < pre_start_records:
+                rows_desc.append(row)
+                before_start_count += 1
+                continue
+
             break
 
     if not rows_desc:
@@ -1508,7 +1615,7 @@ def parse_day_records_reverse_for_range(file_path, start_int, end_int):
 
 
 def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
-                            entry_threshold, log_func):
+                            entry_threshold, log_func, pre_start_records=1):
     start_int = int(start_date)
     end_int = int(end_date)
 
@@ -1523,7 +1630,12 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
 
     for idx, (market, symbol) in enumerate(symbols, start=1):
         path = day_file_path(tdx_root, market, symbol)
-        rows = parse_day_records_reverse_for_range(path, start_int, end_int)
+        rows = parse_day_records_reverse_for_range(
+            path,
+            start_int,
+            end_int,
+            pre_start_records=pre_start_records,
+        )
 
         if len(rows) < 2:
             if idx % 500 == 0:
@@ -1582,7 +1694,8 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
     return daily_all, daily_qualified
 
 
-def build_block_index_cache(tdx_root, blocks, start_date, end_date, log_func):
+def build_block_index_cache(tdx_root, blocks, start_date, end_date, log_func,
+                            pre_start_records=1):
     """
     读取通达信板块指数日线，生成每日板块指数行情缓存。
 
@@ -1627,7 +1740,12 @@ def build_block_index_cache(tdx_root, blocks, start_date, end_date, log_func):
             missing_count += 1
             continue
 
-        rows = parse_day_records_reverse_for_range(path, start_int, end_int)
+        rows = parse_day_records_reverse_for_range(
+            path,
+            start_int,
+            end_int,
+            pre_start_records=pre_start_records,
+        )
 
         if len(rows) < 2:
             missing_count += 1
@@ -1650,6 +1768,13 @@ def build_block_index_cache(tdx_root, blocks, start_date, end_date, log_func):
                 continue
 
             pct_chg = (float(row["CLOSE"]) - prev_close) / prev_close * 100.0
+
+            block_3d_pct_chg = None
+            if i >= 3:
+                d3_close = float(rows[i - 3]["CLOSE"])
+                if d3_close > 0:
+                    block_3d_pct_chg = (float(row["CLOSE"]) - d3_close) / d3_close * 100.0
+
             yyyymmdd = str(d)
 
             result.setdefault(yyyymmdd, {})[block_code] = {
@@ -1662,6 +1787,7 @@ def build_block_index_cache(tdx_root, blocks, start_date, end_date, log_func):
                 "BLOCK_AMOUNT": row["AMOUNT"],
                 "BLOCK_VOLUME": row["VOLUME"],
                 "BLOCK_PCT_CHG": pct_chg,
+                "BLOCK_3D_PCT_CHG": block_3d_pct_chg,
             }
 
             has_valid_row = True
@@ -1678,6 +1804,87 @@ def build_block_index_cache(tdx_root, blocks, start_date, end_date, log_func):
 
     return result
 
+def build_block_member_volume_cache(blocks, daily_all, output_start_date=None, output_end_date=None):
+    """
+    按日期、板块统计成分股总成交量，并计算收盘量比。
+
+    收盘量比 = 当日板块总成交量 / 前 5 个交易日板块日均成交量
+
+    注意：
+    - daily_all 可以包含用户开始日期之前的预读数据；
+    - result 只返回 output_start_date ~ output_end_date 范围内的数据；
+    - 这样既能保证量比计算有前置数据，又不会污染最终输出日期。
+    """
+    dates = sorted(daily_all.keys())
+    raw_volume = {}
+
+    for yyyymmdd in dates:
+        stock_map = daily_all.get(yyyymmdd, {})
+
+        for block in blocks:
+            block_code = str(block.get("block_code", "")).strip()
+            if not block_code:
+                continue
+
+            total_volume = 0
+
+            for symbol_key in block.get("symbols", []):
+                stock = stock_map.get(symbol_key)
+                if not stock:
+                    continue
+
+                try:
+                    total_volume += int(stock.get("VOLUME", 0) or 0)
+                except Exception:
+                    pass
+
+            raw_volume.setdefault(yyyymmdd, {})[block_code] = total_volume
+
+    result = {}
+
+    output_start_int = int(output_start_date) if output_start_date else None
+    output_end_int = int(output_end_date) if output_end_date else None
+
+    for idx, yyyymmdd in enumerate(dates):
+        current_int = int(yyyymmdd)
+
+        if output_start_int is not None and current_int < output_start_int:
+            continue
+
+        if output_end_int is not None and current_int > output_end_int:
+            continue
+
+        for block in blocks:
+            block_code = str(block.get("block_code", "")).strip()
+            if not block_code:
+                continue
+
+            current_volume = raw_volume.get(yyyymmdd, {}).get(block_code, 0)
+
+            recent_dates = dates[max(0, idx - 5):idx]
+            recent_volumes = [
+                raw_volume.get(d, {}).get(block_code, 0)
+                for d in recent_dates
+            ]
+
+            valid_recent_volumes = [v for v in recent_volumes if v > 0]
+
+            if valid_recent_volumes:
+                avg_volume = sum(valid_recent_volumes) / len(valid_recent_volumes)
+            else:
+                avg_volume = 0
+
+            if avg_volume > 0:
+                volume_ratio = current_volume / avg_volume
+            else:
+                volume_ratio = ""
+
+            result.setdefault(yyyymmdd, {})[block_code] = {
+                "BLOCK_VOLUME": current_volume,
+                "BLOCK_VOLUME_RATIO": volume_ratio,
+            }
+
+    return result
 
 # ============================================================
 # 排序工具
@@ -2112,7 +2319,8 @@ def make_title_map(field_defs):
     return {x["key"]: x["title"] for x in field_defs}
 
 
-def build_rows_for_date(blocks, qualified_map, block_index_map, block_fields,
+def build_rows_for_date(blocks, qualified_map, block_index_map,
+                        block_volume_map, block_fields,
                         detail_fields, sort_rules, max_blocks, keep_all_blocks,
                         skip_zero_blocks, mark_threshold, concept_type):
     block_title_map = make_title_map(BLOCK_FIELD_DEFS)
@@ -2150,11 +2358,16 @@ def build_rows_for_date(blocks, qualified_map, block_index_map, block_fields,
         index_data = block_index_map.get(block_code,
                                          {}) if block_index_map else {}
 
+        volume_data = block_volume_map.get(block_code, {}) if block_volume_map else {}
+
         block_pct_chg = index_data.get("BLOCK_PCT_CHG")
+        block_3d_pct_chg = index_data.get("BLOCK_3D_PCT_CHG")
         block_open = index_data.get("BLOCK_OPEN", "")
         block_high = index_data.get("BLOCK_HIGH", "")
         block_low = index_data.get("BLOCK_LOW", "")
         block_close = index_data.get("BLOCK_CLOSE", "")
+        block_volume = volume_data.get("BLOCK_VOLUME", "")
+        block_volume_ratio = volume_data.get("BLOCK_VOLUME_RATIO", "")
         block_amount = index_data.get("BLOCK_AMOUNT", "")
 
         record = {
@@ -2165,15 +2378,22 @@ def build_rows_for_date(blocks, qualified_map, block_index_map, block_fields,
             "member_count": member_count,
             "block_code": block_code,
             "block_pct_chg": block_pct_chg,
+            "block_3d_pct_chg": block_3d_pct_chg,
             "block_open": block_open,
             "block_high": block_high,
             "block_low": block_low,
             "block_close": block_close,
+            "block_volume": block_volume,
+            "block_volume_ratio": block_volume_ratio,
             "block_amount": block_amount,
             "sort_values": {
                 "BLOCK_NAME": block["name"],
                 "BLOCK_PCT_CHG":
                 block_pct_chg if block_pct_chg is not None else -999999999.0,
+                "BLOCK_3D_PCT_CHG":
+                block_3d_pct_chg if block_3d_pct_chg is not None else -999999999.0,
+                "BLOCK_VOLUME": block_volume if block_volume != "" else -1,
+                "BLOCK_VOLUME_RATIO": block_volume_ratio if block_volume_ratio != "" else -1.0,
                 "BLOCK_AMOUNT": block_amount if block_amount != "" else -1.0,
                 "MEMBER_COUNT": member_count,
                 "QUALIFIED_COUNT": qualified_count,
@@ -2210,10 +2430,13 @@ def build_rows_for_date(blocks, qualified_map, block_index_map, block_fields,
             "RANK": rank,
             "BLOCK_NAME": rec["block"]["name"],
             "BLOCK_PCT_CHG": rec["block_pct_chg"],
+            "BLOCK_3D_PCT_CHG": rec["block_3d_pct_chg"],
             "BLOCK_OPEN": rec["block_open"],
             "BLOCK_HIGH": rec["block_high"],
             "BLOCK_LOW": rec["block_low"],
             "BLOCK_CLOSE": rec["block_close"],
+            "BLOCK_VOLUME": rec["block_volume"],
+            "BLOCK_VOLUME_RATIO": rec["block_volume_ratio"],
             "BLOCK_AMOUNT": rec["block_amount"],
             "MEMBER_COUNT": rec["member_count"],
             "QUALIFIED_COUNT": rec["qualified_count"],
@@ -2226,7 +2449,7 @@ def build_rows_for_date(blocks, qualified_map, block_index_map, block_fields,
             for key in block_fields:
                 value = block_values.get(key, "")
 
-                if key == "BLOCK_PCT_CHG" and value != "" and value is not None:
+                if key in ["BLOCK_PCT_CHG", "BLOCK_3D_PCT_CHG"] and value != "" and value is not None:
                     value = float(value) / 100.0
 
                 row[block_title_map[key]] = value
@@ -2245,7 +2468,7 @@ def build_rows_for_date(blocks, qualified_map, block_index_map, block_fields,
             for key in block_fields:
                 value = block_values.get(key, "")
 
-                if key == "BLOCK_PCT_CHG" and value != "" and value is not None:
+                if key in ["BLOCK_PCT_CHG", "BLOCK_3D_PCT_CHG"] and value != "" and value is not None:
                     value = float(value) / 100.0
 
                 row[block_title_map[key]] = value
@@ -2367,6 +2590,12 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges,
     mark_rows = set(mark_rows)
     mark_fill = PatternFill("solid", fgColor=mark_fill_color)
 
+    volume_shrink_fill = PatternFill("solid", fgColor="DDEBF7")      # 浅蓝色
+    volume_mild_fill = PatternFill("solid", fgColor="FFF2CC")        # 浅黄色
+    volume_obvious_fill = PatternFill("solid", fgColor="F4B183")     # 橙黄色
+    volume_huge_fill = PatternFill("solid", fgColor="F4CCCC")        # 浅红色
+
+
     thin_side = Side(style="thin", color="D9D9D9")
     thin_border = Border(
         left=thin_side,
@@ -2387,7 +2616,7 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges,
 
     header_map = {cell.value: cell.column for cell in ws[1]}
 
-    for title in ["达标占比", "板块涨幅"]:
+    for title in ["达标占比", "板块涨幅", "3日涨幅"]:
         col = header_map.get(title)
         if col:
             for r in range(2, ws.max_row + 1):
@@ -2420,8 +2649,15 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges,
             for r in range(2, ws.max_row + 1):
                 ws.cell(r, col).number_format = "#,##0.00"
 
+    for title in ["收盘量比"]:
+        col = header_map.get(title)
+        if col:
+            for r in range(2, ws.max_row + 1):
+                ws.cell(r, col).number_format = "0.00"
+
     for title in [
             "成交量",
+            "板块成交量",
             "序号",
             "总成分股数",
             "达标个股数",
@@ -2432,6 +2668,8 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges,
             for r in range(2, ws.max_row + 1):
                 ws.cell(r, col).number_format = "#,##0"
 
+    volume_ratio_col = header_map.get("收盘量比")
+
     for row_idx in range(1, ws.max_row + 1):
         for col_idx in range(1, ws.max_column + 1):
             cell = ws.cell(row_idx, col_idx)
@@ -2439,6 +2677,22 @@ def style_sheet(writer, sheet_name, df, block_field_count, merge_ranges,
 
             if row_idx in mark_rows and col_idx > block_field_count:
                 cell.fill = mark_fill
+
+            if row_idx >= 2 and volume_ratio_col and col_idx == volume_ratio_col:
+                try:
+                    ratio_value = float(cell.value)
+                except Exception:
+                    ratio_value = None
+
+                if ratio_value is not None:
+                    if ratio_value < 0.8:
+                        cell.fill = volume_shrink_fill
+                    elif 1.5 < ratio_value <= 2.5:
+                        cell.fill = volume_mild_fill
+                    elif 2.5 < ratio_value <= 5.0:
+                        cell.fill = volume_obvious_fill
+                    elif ratio_value > 5.0:
+                        cell.fill = volume_huge_fill
 
             if row_idx == 1:
                 cell.alignment = Alignment(
@@ -2721,6 +2975,20 @@ def export_to_excel(config, output_path, log_func=print):
     detail_fields = list(config["detail_fields"]["selected"])
     sort_rules = deepcopy(config["sort"]["rules"])
 
+    stock_pre_start_records = calc_required_stock_lookback_records(
+        block_fields=block_fields,
+        detail_fields=detail_fields,
+        sort_rules=sort_rules,
+    )
+
+    block_index_pre_start_records = calc_required_block_index_lookback_records(
+        block_fields=block_fields,
+        sort_rules=sort_rules,
+    )
+
+    log_func(f"个股日线前置读取交易日数：{stock_pre_start_records}")
+    log_func(f"板块指数日线前置读取交易日数：{block_index_pre_start_records}")
+
     log_func("历史日线数据源：TDX")
     log_func(f"TDX 日线路径：{daily_tdx_root}")
     log_func(f"概念成分数据源：{concept_type}")
@@ -2758,7 +3026,7 @@ def export_to_excel(config, output_path, log_func=print):
 
     name_map = load_stock_name_map(config, log_func)
 
-    log_func("开始倒序解析个股日线并计算涨幅...")
+    log_func("开始倒序解析个股日线并计算涨幅，含所需前置交易日数据...")
     daily_all, daily_qualified = build_daily_stock_cache(
         tdx_root=daily_tdx_root,
         symbols=unique_symbols,
@@ -2767,19 +3035,30 @@ def export_to_excel(config, output_path, log_func=print):
         end_date=end_date,
         entry_threshold=entry_threshold,
         log_func=log_func,
+        pre_start_records=stock_pre_start_records,
     )
 
     if concept_source_supports_block_index(concept_type):
-        log_func("开始解析板块指数日线并计算板块涨幅...")
+        log_func("开始解析板块指数日线并计算板块涨幅、3日涨幅，含所需前置交易日数据...")
         daily_block_index = build_block_index_cache(
             tdx_root=daily_tdx_root,
             blocks=blocks,
             start_date=start_date,
             end_date=end_date,
             log_func=log_func,
+            pre_start_records=block_index_pre_start_records,
+        )
+
+        log_func("开始按板块成分股汇总成交量并计算收盘量比...")
+        daily_block_volume = build_block_member_volume_cache(
+            blocks=blocks,
+            daily_all=daily_all,
+            output_start_date=start_date,
+            output_end_date=end_date,
         )
     else:
         daily_block_index = {}
+        daily_block_volume = {}
         log_func("概念源为 THS，跳过板块指数日线解析。")
 
     daily_outputs = []
@@ -2790,6 +3069,7 @@ def export_to_excel(config, output_path, log_func=print):
                                     parse_yyyymmdd(end_date)):
         qualified_map = daily_qualified.get(yyyymmdd, {})
         block_index_map = daily_block_index.get(yyyymmdd, {})
+        block_volume_map = daily_block_volume.get(yyyymmdd, {})
 
         if not qualified_map and skip_zero_blocks:
             log_func(f"处理日期：{yyyymmdd}，无达标个股，跳过")
@@ -2799,6 +3079,7 @@ def export_to_excel(config, output_path, log_func=print):
             blocks=blocks,
             qualified_map=qualified_map,
             block_index_map=block_index_map,
+            block_volume_map=block_volume_map,
             block_fields=block_fields,
             detail_fields=detail_fields,
             sort_rules=sort_rules,
@@ -4458,7 +4739,7 @@ if __name__ == "__main__":
 
 # 【封装exe文件】
 # Set-Location "E:\AppProject\GNBlockRank"
-# python -m PyInstaller "E:\AppProject\GNBlockRank\GNBlockRank v2.py" --onefile --windowed --clean --noconfirm --name "GNBlockRank" --icon "E:\AppProject\GNBlockRank\icon.ico" --add-data "E:\AppProject\GNBlockRank\wechat_qr.png;." --add-data "E:\AppProject\GNBlockRank\icon.ico;." --upx-dir "D:\upx-5.1.1-win64" --collect-all openpyxl --hidden-import openpyxl --hidden-import openpyxl.styles --hidden-import openpyxl.utils --hidden-import openpyxl.cell --hidden-import openpyxl.cell._writer --hidden-import openpyxl.worksheet --hidden-import openpyxl.writer.excel --hidden-import secrets --exclude-module matplotlib --exclude-module scipy --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --exclude-module IPython --exclude-module notebook --exclude-module pytest --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module html --exclude-module http --exclude-module xmlrpc
+# python -m PyInstaller "E:\AppProject\GNBlockRank\GNBlockRank v3.py" --onefile --windowed --clean --noconfirm --name "GNBlockRank" --icon "E:\AppProject\GNBlockRank\icon.ico" --add-data "E:\AppProject\GNBlockRank\wechat_qr.png;." --add-data "E:\AppProject\GNBlockRank\icon.ico;." --upx-dir "D:\upx-5.1.1-win64" --collect-all openpyxl --hidden-import openpyxl --hidden-import openpyxl.styles --hidden-import openpyxl.utils --hidden-import openpyxl.cell --hidden-import openpyxl.cell._writer --hidden-import openpyxl.worksheet --hidden-import openpyxl.writer.excel --hidden-import secrets --exclude-module matplotlib --exclude-module scipy --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --exclude-module IPython --exclude-module notebook --exclude-module pytest --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module html --exclude-module http --exclude-module xmlrpc
 
 # 文件会生成在"E:\AppProject\GNBlockRank\dist\GNBlockRank.exe"
 

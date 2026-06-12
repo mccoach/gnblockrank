@@ -1627,6 +1627,8 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
 
     valid_symbol_count = 0
     qualified_record_count = 0
+    daily_all_record_count = 0
+    pre_start_daily_all_record_count = 0
 
     for idx, (market, symbol) in enumerate(symbols, start=1):
         path = day_file_path(tdx_root, market, symbol)
@@ -1637,26 +1639,25 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
             pre_start_records=pre_start_records,
         )
 
-        if len(rows) < 2:
+        if not rows:
             if idx % 500 == 0:
                 log_func(f"已解析个股日线：{idx}/{total}，有效证券：{valid_symbol_count}")
             continue
 
         valid_this_symbol = False
 
-        for i in range(1, len(rows)):
-            prev_row = rows[i - 1]
-            row = rows[i]
-
+        # ------------------------------------------------------------
+        # 1）先把所有读取到的日线记录放入 daily_all
+        #    包括用户开始日期之前的前置记录。
+        #    这样收盘量比才能拿到前 5 日成交量。
+        # ------------------------------------------------------------
+        for row in rows:
             d = int(row["DATE"])
-            if d < start_int or d > end_int:
+
+            # 保险：不需要 end_date 之后的数据
+            if d > end_int:
                 continue
 
-            prev_close = float(prev_row["CLOSE"])
-            if prev_close <= 0:
-                continue
-
-            pct_chg = (float(row["CLOSE"]) - prev_close) / prev_close * 100.0
             yyyymmdd = str(d)
 
             stock_data = {
@@ -1671,16 +1672,54 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
                 "CLOSE": row["CLOSE"],
                 "VOLUME": row["VOLUME"],
                 "AMOUNT": row["AMOUNT"],
-                "PCT_CHG": pct_chg,
+                "PCT_CHG": "",
             }
 
             daily_all.setdefault(yyyymmdd, {})[(market, symbol)] = stock_data
+            daily_all_record_count += 1
+
+            if d < start_int:
+                pre_start_daily_all_record_count += 1
+
             valid_this_symbol = True
 
-            if pct_chg > entry_threshold:
-                daily_qualified.setdefault(yyyymmdd,
-                                           {})[(market, symbol)] = stock_data
-                qualified_record_count += 1
+        # ------------------------------------------------------------
+        # 2）再计算涨幅。
+        #    注意：
+        #    - daily_all 里面可以更新 PCT_CHG；
+        #    - daily_qualified 只允许保存用户指定日期范围内的数据。
+        # ------------------------------------------------------------
+        if len(rows) >= 2:
+            for i in range(1, len(rows)):
+                prev_row = rows[i - 1]
+                row = rows[i]
+
+                d = int(row["DATE"])
+
+                if d > end_int:
+                    continue
+
+                prev_close = float(prev_row["CLOSE"])
+                if prev_close <= 0:
+                    continue
+
+                pct_chg = (float(row["CLOSE"]) - prev_close) / prev_close * 100.0
+                yyyymmdd = str(d)
+
+                stock_data = daily_all.get(yyyymmdd, {}).get((market, symbol))
+                if not stock_data:
+                    continue
+
+                stock_data["PCT_CHG"] = pct_chg
+
+                # 只有用户指定日期范围内的数据才参与达标统计和最终输出
+                if d < start_int or d > end_int:
+                    continue
+
+                if pct_chg > entry_threshold:
+                    daily_qualified.setdefault(yyyymmdd,
+                                               {})[(market, symbol)] = stock_data
+                    qualified_record_count += 1
 
         if valid_this_symbol:
             valid_symbol_count += 1
@@ -1689,6 +1728,8 @@ def build_daily_stock_cache(tdx_root, symbols, name_map, start_date, end_date,
             log_func(f"已解析个股日线：{idx}/{total}，有效证券：{valid_symbol_count}")
 
     log_func(f"个股日线解析完成：唯一证券 {total}，有效证券 {valid_symbol_count}，"
+             f"全量日期记录 {daily_all_record_count}，"
+             f"其中前置日期记录 {pre_start_daily_all_record_count}，"
              f"达标证券日期记录 {qualified_record_count}")
 
     return daily_all, daily_qualified
@@ -3056,6 +3097,13 @@ def export_to_excel(config, output_path, log_func=print):
             output_start_date=start_date,
             output_end_date=end_date,
         )
+        log_func(f"个股全量缓存日期数：{len(daily_all)}，日期范围："
+                 f"{min(daily_all.keys()) if daily_all else ''} ~ "
+                 f"{max(daily_all.keys()) if daily_all else ''}")
+
+        log_func(f"板块量比缓存日期数：{len(daily_block_volume)}，日期范围："
+                 f"{min(daily_block_volume.keys()) if daily_block_volume else ''} ~ "
+                 f"{max(daily_block_volume.keys()) if daily_block_volume else ''}")
     else:
         daily_block_index = {}
         daily_block_volume = {}
@@ -4759,8 +4807,10 @@ if __name__ == "__main__":
 
 # git tag -d 你的版本号 #删除本地指定版本号标签
 
+# git push --delete origin 你的版本号 #删除远程指定版本号标签
 
 # git push origin --tags #推送所有版本号标签到远程仓库，只推版本号不推代码
+
 
 # #最常用的 5 条命令（每次推送都用）
 # git add .            # 保存改动
